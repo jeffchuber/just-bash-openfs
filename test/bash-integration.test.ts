@@ -40,7 +40,7 @@ async function createTestBash(mountPoint = "/openfs"): Promise<{
 		cwd: mountPoint,
 		customCommands: [
 			createSearchCommand(client),
-			createGrepCommand(client),
+			createGrepCommand(client, mountPoint),
 		],
 	});
 	return { bash, openFs, client };
@@ -261,7 +261,7 @@ EOF`,
 // 3. GREP COMMAND (mirrors chroma-grep patterns)
 // =====================================================================
 
-describe("openfsgrep command via bash", () => {
+describe("grep command via bash", () => {
 	let bash: Bash;
 
 	beforeEach(async () => {
@@ -282,21 +282,21 @@ describe("openfsgrep command via bash", () => {
 	});
 
 	it("finds pattern in files", async () => {
-		// openfsgrep uses OpenFS VFS paths (not mount paths), like sgrep in just-bash-chroma
-		const result = await run(bash, "openfsgrep pub /code");
+		// grep uses mount paths — transparently routes to server-side grep
+		const result = await run(bash, "grep -r pub /openfs/code");
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("pub");
 	});
 
 	it("shows line numbers with -n", async () => {
-		const result = await run(bash, "openfsgrep -n pub /code");
+		const result = await run(bash, "grep -rn pub /openfs/code");
 		expect(result.exitCode).toBe(0);
 		// Should contain path:linenum:content format
-		expect(result.stdout).toMatch(/\/code\/[^:]+:\d+:.*pub/);
+		expect(result.stdout).toMatch(/\/openfs\/code\/[^:]+:\d+:.*pub/);
 	});
 
 	it("returns exit code 1 for no matches", async () => {
-		const result = await run(bash, "openfsgrep nonexistent_pattern /code");
+		const result = await run(bash, "grep -r nonexistent_pattern /openfs/code");
 		expect(result.exitCode).toBe(1);
 		expect(result.stdout).toBe("");
 	});
@@ -304,7 +304,7 @@ describe("openfsgrep command via bash", () => {
 	it("can be piped", async () => {
 		const result = await run(
 			bash,
-			"openfsgrep pub /code | wc -l",
+			"grep -r pub /openfs/code | wc -l",
 		);
 		expect(result.exitCode).toBe(0);
 		const count = Number.parseInt(result.stdout.trim(), 10);
@@ -654,7 +654,7 @@ describe("overlay filesystem (local + openfs)", () => {
 			cwd: "/project",
 			customCommands: [
 				createSearchCommand(client),
-				createGrepCommand(client),
+				createGrepCommand(client, "/index"),
 			],
 		});
 	});

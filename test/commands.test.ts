@@ -20,6 +20,60 @@ function mockClient(overrides: Partial<Vfs> = {}): Vfs {
 	} as Vfs;
 }
 
+/** Minimal mock fs for the grep command context. */
+function mockFs(files: Record<string, string> = {}) {
+	return {
+		readFile: vi.fn(async (path: string) => {
+			if (path in files) return files[path];
+			throw new Error(`not found: ${path}`);
+		}),
+		readdir: vi.fn(async (path: string) => {
+			const prefix = path.endsWith("/") ? path : `${path}/`;
+			const names = new Set<string>();
+			for (const key of Object.keys(files)) {
+				if (key.startsWith(prefix)) {
+					const rest = key.slice(prefix.length);
+					const name = rest.split("/")[0];
+					if (name) names.add(name);
+				}
+			}
+			return [...names];
+		}),
+		stat: vi.fn(async (path: string) => {
+			if (path in files) {
+				return { isFile: true, isDirectory: false };
+			}
+			// Check if it's a directory prefix
+			const prefix = path.endsWith("/") ? path : `${path}/`;
+			for (const key of Object.keys(files)) {
+				if (key.startsWith(prefix)) {
+					return { isFile: false, isDirectory: true };
+				}
+			}
+			throw new Error(`not found: ${path}`);
+		}),
+		resolvePath: vi.fn((base: string, rel: string) => {
+			if (rel.startsWith("/")) return rel;
+			const b = base.endsWith("/") ? base : `${base}/`;
+			return `${b}${rel}`;
+		}),
+	};
+}
+
+function grepCtx(
+	overrides: {
+		fs?: ReturnType<typeof mockFs>;
+		cwd?: string;
+		stdin?: string;
+	} = {},
+) {
+	return {
+		fs: overrides.fs ?? mockFs(),
+		cwd: overrides.cwd ?? "/data",
+		stdin: overrides.stdin ?? "",
+	};
+}
+
 // =====================================================================
 // search command
 // =====================================================================
@@ -198,118 +252,128 @@ describe("search command", () => {
 });
 
 // =====================================================================
-// openfsgrep command
+// grep command (unified — server-side + local)
 // =====================================================================
 
-describe("openfsgrep command", () => {
-	it("returns formatted grep output", async () => {
+describe("grep command", () => {
+	const MOUNT = "/data";
+
+	it("returns formatted grep output (server-side)", async () => {
 		const client = mockClient({
 			grep: vi.fn(async () => [
 				{ path: "/src/main.rs", line_number: 10, line: "fn main() {" },
 				{ path: "/src/lib.rs", line_number: 5, line: "pub mod lib;" },
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["main"], {});
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["main", "/data/src"], grepCtx());
 
 		expect(result.exitCode).toBe(0);
-		expect(result.stdout).toContain("/src/main.rs:fn main() {");
-		expect(result.stdout).toContain("/src/lib.rs:pub mod lib;");
+		expect(result.stdout).toContain("/data/src/main.rs:fn main() {");
 	});
 
-	it("shows line numbers with -n", async () => {
+	it("shows line numbers with -n (multi-file)", async () => {
 		const client = mockClient({
 			grep: vi.fn(async () => [
 				{ path: "/src/main.rs", line_number: 10, line: "fn main() {" },
+				{ path: "/src/lib.rs", line_number: 3, line: "fn helper() {" },
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["-n", "main"], {});
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["-rn", "fn", "/data/src"], grepCtx());
 
-		expect(result.stdout).toContain("/src/main.rs:10:fn main() {");
+		expect(result.stdout).toContain("/data/src/main.rs:10:fn main() {");
+		expect(result.stdout).toContain("/data/src/lib.rs:3:fn helper() {");
 	});
 
-	it("shows line numbers with --line-number", async () => {
+	it("shows line numbers with -n (single file)", async () => {
 		const client = mockClient({
 			grep: vi.fn(async () => [
 				{ path: "/f.txt", line_number: 42, line: "the line" },
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["--line-number", "the"], {});
-		expect(result.stdout).toContain("/f.txt:42:the line");
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(
+			["-n", "the", "/data/f.txt"],
+			grepCtx(),
+		);
+		// Single file — no filename prefix
+		expect(result.stdout).toBe("42:the line\n");
 	});
 
-	it("accepts -r flag silently (always recursive)", async () => {
+	it("accepts -r flag (recursive)", async () => {
 		const grepFn = vi.fn(async () => [] as GrepMatch[]);
 		const client = mockClient({ grep: grepFn });
-		const cmd = createGrepCommand(client);
-		await cmd.execute(["-r", "pattern", "/src"], {});
-		expect(grepFn).toHaveBeenCalledWith("pattern", "/src");
+		const cmd = createGrepCommand(client, MOUNT);
+		await cmd.execute(["-r", "pattern", "/data/src"], grepCtx());
+		expect(grepFn).toHaveBeenCalled();
 	});
 
-	it("accepts --recursive flag silently", async () => {
+	it("accepts --recursive flag", async () => {
 		const grepFn = vi.fn(async () => [] as GrepMatch[]);
 		const client = mockClient({ grep: grepFn });
-		const cmd = createGrepCommand(client);
-		await cmd.execute(["--recursive", "pat", "/dir"], {});
-		expect(grepFn).toHaveBeenCalledWith("pat", "/dir");
+		const cmd = createGrepCommand(client, MOUNT);
+		await cmd.execute(["--recursive", "pat", "/data/dir"], grepCtx());
+		expect(grepFn).toHaveBeenCalled();
 	});
 
 	it("returns exit code 1 for no matches", async () => {
-		const cmd = createGrepCommand(mockClient());
-		const result = await cmd.execute(["pattern"], {});
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(["pattern", "/data"], grepCtx());
 		expect(result.exitCode).toBe(1);
 		expect(result.stdout).toBe("");
 	});
 
 	it("returns error for missing pattern", async () => {
-		const cmd = createGrepCommand(mockClient());
-		const result = await cmd.execute([], {});
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute([], grepCtx());
 		expect(result.exitCode).toBe(2);
 		expect(result.stderr).toContain("usage");
 	});
 
 	it("returns error for unknown flag", async () => {
-		const cmd = createGrepCommand(mockClient());
-		const result = await cmd.execute(["-z", "pattern"], {});
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(["-z", "pattern"], grepCtx());
 		expect(result.exitCode).toBe(2);
 		expect(result.stderr).toContain("unknown option: -z");
 	});
 
 	it("returns error for unknown long flag", async () => {
-		const cmd = createGrepCommand(mockClient());
-		const result = await cmd.execute(["--color", "pattern"], {});
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(["--color", "pattern"], grepCtx());
 		expect(result.exitCode).toBe(2);
 		expect(result.stderr).toContain("unknown option: --color");
 	});
 
 	it("handles -- separator", async () => {
 		const grepFn = vi.fn(async () => [
-			{ path: "/f.txt", line_number: 1, line: "-n stuff" },
+			{ path: "/-n", line_number: 1, line: "-n stuff" },
 		] as GrepMatch[]);
 		const client = mockClient({ grep: grepFn });
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["--", "-n", "/path"], {});
-		// After --, -n is treated as the pattern, /path as the path
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(
+			["--", "-n", "/data/path"],
+			grepCtx(),
+		);
+		// After --, -n is treated as the pattern, /data/path as the path
 		expect(grepFn).toHaveBeenCalledWith("-n", "/path");
 		expect(result.exitCode).toBe(0);
 	});
 
-	it("passes path when provided", async () => {
+	it("passes path to server-side grep", async () => {
 		const grepFn = vi.fn(async () => [] as GrepMatch[]);
 		const client = mockClient({ grep: grepFn });
-		const cmd = createGrepCommand(client);
-		await cmd.execute(["pattern", "/specific/dir"], {});
+		const cmd = createGrepCommand(client, MOUNT);
+		await cmd.execute(["pattern", "/data/specific/dir"], grepCtx());
 		expect(grepFn).toHaveBeenCalledWith("pattern", "/specific/dir");
 	});
 
-	it("omits path when not provided", async () => {
+	it("uses root path when searching mount root", async () => {
 		const grepFn = vi.fn(async () => [] as GrepMatch[]);
 		const client = mockClient({ grep: grepFn });
-		const cmd = createGrepCommand(client);
-		await cmd.execute(["pattern"], {});
-		expect(grepFn).toHaveBeenCalledWith("pattern", undefined);
+		const cmd = createGrepCommand(client, MOUNT);
+		await cmd.execute(["pattern", "/data"], grepCtx());
+		expect(grepFn).toHaveBeenCalledWith("pattern", "/");
 	});
 
 	it("combines -n and -r flags", async () => {
@@ -317,12 +381,12 @@ describe("openfsgrep command", () => {
 			{ path: "/a.txt", line_number: 5, line: "match" },
 		] as GrepMatch[]);
 		const client = mockClient({ grep: grepFn });
-		const cmd = createGrepCommand(client);
+		const cmd = createGrepCommand(client, MOUNT);
 		const result = await cmd.execute(
-			["-r", "-n", "pattern", "/dir"],
-			{},
+			["-r", "-n", "pattern", "/data/dir"],
+			grepCtx(),
 		);
-		expect(result.stdout).toContain("/a.txt:5:match");
+		expect(result.stdout).toContain("/data/a.txt:5:match");
 	});
 
 	it("handles client error gracefully", async () => {
@@ -331,8 +395,8 @@ describe("openfsgrep command", () => {
 				throw new Error("connection lost");
 			}),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["pattern"], {});
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["pattern", "/data"], grepCtx());
 		expect(result.exitCode).toBe(2);
 		expect(result.stderr).toContain("connection lost");
 	});
@@ -343,8 +407,8 @@ describe("openfsgrep command", () => {
 				throw "raw string";
 			}),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["pattern"], {});
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["pattern", "/data"], grepCtx());
 		expect(result.exitCode).toBe(2);
 		expect(result.stderr).toContain("raw string");
 	});
@@ -357,8 +421,8 @@ describe("openfsgrep command", () => {
 				{ path: "/b.txt", line_number: 10, line: "third" },
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["pattern"], {});
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["pattern", "/data"], grepCtx());
 		const lines = result.stdout.trim().split("\n");
 		expect(lines).toHaveLength(3);
 	});
@@ -369,8 +433,8 @@ describe("openfsgrep command", () => {
 				{ path: "/x.txt", line_number: 1, line: "hit" },
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["hit"], {});
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["hit", "/data"], grepCtx());
 		expect(result.stdout.endsWith("\n")).toBe(true);
 	});
 
@@ -380,14 +444,14 @@ describe("openfsgrep command", () => {
 				{ path: "/x.txt", line_number: 1, line: "hit" },
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["hit"], {});
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["hit", "/data"], grepCtx());
 		expect(result.stderr).toBe("");
 	});
 
 	it("stderr empty on no match (exit 1)", async () => {
-		const cmd = createGrepCommand(mockClient());
-		const result = await cmd.execute(["nope"], {});
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(["nope", "/data"], grepCtx());
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toBe("");
 	});
@@ -398,9 +462,10 @@ describe("openfsgrep command", () => {
 				{ path: "/f.txt", line_number: 99, line: "the content" },
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["the"], {});
-		expect(result.stdout).toBe("/f.txt:the content\n");
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["the", "/data/f.txt"], grepCtx());
+		// Single file — no filename prefix (standard grep behavior)
+		expect(result.stdout).toBe("the content\n");
 		expect(result.stdout).not.toContain("99");
 	});
 
@@ -410,9 +475,10 @@ describe("openfsgrep command", () => {
 				{ path: "/f.txt", line_number: 1, line: "" },
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["x"], {});
-		expect(result.stdout).toBe("/f.txt:\n");
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(["x", "/data/f.txt"], grepCtx());
+		// Single file, no filename prefix; server returned empty line
+		expect(result.stdout).toBe("\n");
 	});
 
 	it("handles match with colons in content", async () => {
@@ -425,23 +491,217 @@ describe("openfsgrep command", () => {
 				},
 			] as GrepMatch[]),
 		});
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["-n", "host"], {});
-		expect(result.stdout).toBe(
-			"/config.yaml:3:host: localhost:8080\n",
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(
+			["-n", "host", "/data/config.yaml"],
+			grepCtx(),
 		);
+		// Single file — no filename prefix
+		expect(result.stdout).toBe("3:host: localhost:8080\n");
 	});
 
-	it("-n after pattern is still parsed as a flag", async () => {
-		// The grep command processes all flags regardless of position
-		const grepFn = vi.fn(async () => [
-			{ path: "/f.txt", line_number: 1, line: "hit" },
-		] as GrepMatch[]);
+	// ── Stdin grep tests ─────────────────────────────────────────────
+
+	it("greps from stdin when no files given", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["hello"],
+			grepCtx({ stdin: "hello world\ngoodbye world\nhello again\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("hello world\nhello again\n");
+	});
+
+	it("stdin grep with -i flag", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-i", "HELLO"],
+			grepCtx({ stdin: "Hello World\ngoodbye\nhELLO\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("Hello World\nhELLO\n");
+	});
+
+	it("stdin grep with -v flag (invert)", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-v", "hello"],
+			grepCtx({ stdin: "hello\nworld\nhello again\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("world\n");
+	});
+
+	it("stdin grep with -c flag (count)", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-c", "hello"],
+			grepCtx({ stdin: "hello\nworld\nhello again\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("2\n");
+	});
+
+	it("stdin grep with -n flag", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-n", "world"],
+			grepCtx({ stdin: "hello\nworld\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("2:world\n");
+	});
+
+	// ── Local file grep tests ────────────────────────────────────────
+
+	it("greps local files (non-OpenFS path)", async () => {
+		const fs = mockFs({
+			"/local/file.txt": "hello world\ngoodbye world\nhello again\n",
+		});
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["hello", "/local/file.txt"],
+			grepCtx({ fs }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("hello world");
+		expect(result.stdout).toContain("hello again");
+	});
+
+	// ── Flag tests ───────────────────────────────────────────────────
+
+	it("-E extended regexp works", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-E", "he(l)+o"],
+			grepCtx({ stdin: "hello\nworld\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("hello\n");
+	});
+
+	it("-F fixed strings escapes regex metacharacters", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-F", "a.b"],
+			grepCtx({ stdin: "a.b\naxb\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("a.b\n");
+	});
+
+	it("-w matches whole words only", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-w", "he"],
+			grepCtx({ stdin: "he said hello\nshe is here\nhe\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		// "he" as whole word should match "he said hello" and "he" but not "she" or "here"
+		expect(result.stdout).toContain("he said hello");
+		expect(result.stdout).toContain("he\n");
+	});
+
+	it("-o only matching parts", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-o", "[0-9]+"],
+			grepCtx({ stdin: "abc 123 def 456\nno numbers\n789\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("123");
+		expect(result.stdout).toContain("456");
+		expect(result.stdout).toContain("789");
+		expect(result.stdout).not.toContain("abc");
+	});
+
+	it("-q quiet mode returns exit code only", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const match = await cmd.execute(
+			["-q", "hello"],
+			grepCtx({ stdin: "hello world\n" }),
+		);
+		expect(match.exitCode).toBe(0);
+		expect(match.stdout).toBe("");
+
+		const noMatch = await cmd.execute(
+			["-q", "missing"],
+			grepCtx({ stdin: "hello world\n" }),
+		);
+		expect(noMatch.exitCode).toBe(1);
+		expect(noMatch.stdout).toBe("");
+	});
+
+	it("-l lists files with matches", async () => {
+		const fs = mockFs({
+			"/local/a.txt": "hello world\n",
+			"/local/b.txt": "goodbye world\n",
+			"/local/c.txt": "hello again\n",
+		});
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-rl", "hello", "/local"],
+			grepCtx({ fs }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("/local/a.txt");
+		expect(result.stdout).toContain("/local/c.txt");
+		expect(result.stdout).not.toContain("/local/b.txt");
+	});
+
+	it("-m limits matches per file", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-m", "1", "hello"],
+			grepCtx({ stdin: "hello one\nhello two\nhello three\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("hello one\n");
+	});
+
+	it("-e allows specifying pattern explicitly", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-e", "hello"],
+			grepCtx({ stdin: "hello world\ngoodbye\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("hello world\n");
+	});
+
+	it("combined short flags -in work", async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		const result = await cmd.execute(
+			["-in", "HELLO"],
+			grepCtx({ stdin: "Hello World\ngoodbye\n" }),
+		);
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("1:Hello World\n");
+	});
+
+	// ── -v falls back to local for OpenFS paths ──────────────────────
+
+	it("-v falls back to local grep for OpenFS paths", async () => {
+		const grepFn = vi.fn(async () => [] as GrepMatch[]);
+		const fs = mockFs({
+			"/data/file.txt": "hello\nworld\nhello again\n",
+		});
 		const client = mockClient({ grep: grepFn });
-		const cmd = createGrepCommand(client);
-		const result = await cmd.execute(["pattern", "-n"], {});
-		// -n is treated as the line-number flag, not as a path
-		expect(grepFn).toHaveBeenCalledWith("pattern", undefined);
-		expect(result.stdout).toContain("/f.txt:1:hit");
+		const cmd = createGrepCommand(client, MOUNT);
+		const result = await cmd.execute(
+			["-v", "hello", "/data/file.txt"],
+			grepCtx({ fs }),
+		);
+		// Should NOT call server-side grep (because -v is incompatible)
+		expect(grepFn).not.toHaveBeenCalled();
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toBe("world\n");
+	});
+
+	// ── Command name ─────────────────────────────────────────────────
+
+	it('command is named "grep"', async () => {
+		const cmd = createGrepCommand(mockClient(), MOUNT);
+		expect(cmd.name).toBe("grep");
 	});
 });

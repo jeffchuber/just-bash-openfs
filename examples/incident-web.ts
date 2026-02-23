@@ -41,7 +41,7 @@ const fs = new MountableFs({
 const bash = new Bash({
 	fs,
 	cwd: "/openfs",
-	customCommands: [createSearchCommand(client), createGrepCommand(client)],
+	customCommands: [createSearchCommand(client), createGrepCommand(client, "/openfs")],
 });
 
 // ── Seed data ─────────────────────────────────────────────────────
@@ -675,9 +675,9 @@ const samples = [
   'cat /openfs/incidents/open.csv | grep P1',
   'cat /openfs/oncall/schedule.csv | grep infra',
   'search "redis memory OOM"',
-  'openfsgrep ERROR /logs/redis-2025-06-15.log',
+  'grep ERROR /openfs/logs/redis-2025-06-15.log',
   'cat /openfs/logs/redis-2025-06-15.log | grep OOM | wc -l',
-  'openfsgrep prod-redis-3 /logs/api-gateway-2025-06-15.log',
+  'grep prod-redis-3 /openfs/logs/api-gateway-2025-06-15.log',
   'stat /openfs/incidents/open.csv',
 ];
 

@@ -38,7 +38,7 @@ ls /data
 cat /data/docs/report.md
 cat /data/db/users.csv | grep admin | wc -l
 search "authentication best practices"
-openfsgrep -n "error" /data/code
+grep -rn "error" /data/code
 ```
 
 ## Step 2: Install in your project
@@ -79,7 +79,7 @@ async function main() {
   const bash = new Bash({
     fs,
     cwd: "/data",
-    customCommands: [createGrepCommand(vfs), createSearchCommand(vfs)],
+    customCommands: [createGrepCommand(vfs, "/data"), createSearchCommand(vfs)],
   });
 
   // 5. Run commands
@@ -103,10 +103,12 @@ npx tsx shell.ts
 
 `@open-fs/just-bash` ships two custom commands that leverage server-side capabilities:
 
-### `openfsgrep` — regex search across backends
+### `grep` — regex search across backends
+
+`grep` works transparently — it uses server-side grep for OpenFS paths and local matching for everything else.
 
 ```typescript
-const result = await bash.exec('openfsgrep -n "TODO" /data/code');
+const result = await bash.exec('grep -rn "TODO" /data/code');
 console.log(result.stdout);
 // /data/code/app.ts:42:// TODO: add error handling
 // /data/code/utils.ts:17:// TODO: refactor this
@@ -123,7 +125,7 @@ console.log(result.stdout);
 Both commands work with pipes like any other shell command:
 
 ```bash
-openfsgrep "error" /data/code | wc -l
+grep "error" /data/code | wc -l
 search "deployment" /data/knowledge | head -5
 ```
 
@@ -147,7 +149,7 @@ const bashTool = createBashTool({
     base: new InMemoryFs(),
     mounts: [{ mountPoint: "/data", filesystem: openFs }],
   }),
-  customCommands: [createGrepCommand(vfs), createSearchCommand(vfs)],
+  customCommands: [createGrepCommand(vfs, "/data"), createSearchCommand(vfs)],
 });
 
 const result = await generateText({

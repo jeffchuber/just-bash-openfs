@@ -60,7 +60,7 @@ async function main() {
 		cwd: "/openfs",
 		customCommands: [
 			createSearchCommand(client),
-			createGrepCommand(client),
+			createGrepCommand(client, "/openfs"),
 		],
 	});
 
@@ -185,13 +185,13 @@ Eviction policy was noeviction, so Redis refused all writes.
 	console.log(`  ${cmd("cat /openfs/runbooks/postmortem-2025-05-redis.md")}`);
 	console.log();
 	console.log(`  ${comment("# Dig into logs")}`);
-	console.log(`  ${cmd("openfsgrep ERROR /logs/redis-2025-06-15.log")}`);
+	console.log(`  ${cmd("grep ERROR /openfs/logs/redis-2025-06-15.log")}`);
 	console.log(`  ${cmd("cat /openfs/logs/redis-2025-06-15.log | grep OOM | wc -l")}`);
 	console.log(`  ${cmd("cat /openfs/logs/redis-2025-06-15.log | grep WARN")}`);
 	console.log();
 	console.log(`  ${comment("# Correlate — API gateway impact from Redis OOM")}`);
-	console.log(`  ${cmd("openfsgrep prod-redis-3 /logs/api-gateway-2025-06-15.log")}`);
-	console.log(`  ${cmd("openfsgrep 503 /logs/api-gateway-2025-06-15.log")}`);
+	console.log(`  ${cmd("grep prod-redis-3 /openfs/logs/api-gateway-2025-06-15.log")}`);
+	console.log(`  ${cmd("grep 503 /openfs/logs/api-gateway-2025-06-15.log")}`);
 	console.log(`  ${cmd("cat /openfs/logs/api-gateway-2025-06-15.log | grep error_rate")}`);
 	console.log();
 	console.log(`  ${comment("# Check past incidents")}`);
@@ -246,9 +246,9 @@ Eviction policy was noeviction, so Redis refused all writes.
 			console.log(`    ${c.white}${c.bold}cat /openfs/oncall/schedule.csv | grep infra${c.reset} ${c.dim}— who's on call?${c.reset}`);
 			console.log(`    ${c.white}${c.bold}search "redis memory OOM"${c.reset}               ${c.dim}— find relevant runbooks${c.reset}`);
 			console.log(`    ${c.white}${c.bold}cat /openfs/runbooks/redis-oom.md${c.reset}           ${c.dim}— read the runbook${c.reset}`);
-			console.log(`    ${c.white}${c.bold}openfsgrep ERROR /logs/redis-2025-06-15.log${c.reset} ${c.dim}— grep log errors${c.reset}`);
+			console.log(`    ${c.white}${c.bold}grep ERROR /openfs/logs/redis-2025-06-15.log${c.reset} ${c.dim}— grep log errors${c.reset}`);
 			console.log(`    ${c.white}${c.bold}cat /openfs/logs/redis-2025-06-15.log | grep OOM | wc -l${c.reset}`);
-			console.log(`    ${c.white}${c.bold}openfsgrep prod-redis-3 /logs/api-gateway-2025-06-15.log${c.reset}`);
+			console.log(`    ${c.white}${c.bold}grep prod-redis-3 /openfs/logs/api-gateway-2025-06-15.log${c.reset}`);
 			console.log(`    ${c.white}${c.bold}echo "notes..." > /openfs/scratch/triage.md${c.reset} ${c.dim}— write scratch notes${c.reset}`);
 			console.log(`    ${c.white}${c.bold}stat /openfs/incidents/open.csv${c.reset}             ${c.dim}— Postgres row-count size${c.reset}`);
 			console.log(`    ${c.white}${c.bold}stat /openfs/logs/redis-2025-06-15.log${c.reset}     ${c.dim}— S3 byte size${c.reset}`);

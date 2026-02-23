@@ -312,7 +312,7 @@ async function makeOpenFsBash(mountPoint: string) {
 	return new Bash({
 		fs,
 		cwd: mountPoint,
-		customCommands: [createOpenFsGrep(client)],
+		customCommands: [createOpenFsGrep(client, mountPoint)],
 	});
 }
 

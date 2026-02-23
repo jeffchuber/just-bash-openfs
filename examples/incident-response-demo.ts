@@ -41,7 +41,7 @@ async function main() {
 		cwd: "/openfs",
 		customCommands: [
 			createSearchCommand(client),
-			createGrepCommand(client),
+			createGrepCommand(client, "/openfs"),
 		],
 	});
 
@@ -200,14 +200,14 @@ EOF`);
 	// ── 7. Dig into logs ───────────────────────────────────────────
 
 	header("7. Dig into logs — grep for errors in Redis log");
-	await run(bash, "openfsgrep ERROR /logs/redis-2025-06-15.log");
+	await run(bash, "grep ERROR /openfs/logs/redis-2025-06-15.log");
 	console.log("  Count OOM occurrences:\n");
 	await run(bash, "cat /openfs/logs/redis-2025-06-15.log | grep OOM | wc -l");
 
 	// ── 8. Correlate across backends ───────────────────────────────
 
 	header("8. Correlate across backends — API gateway impact");
-	await run(bash, "openfsgrep prod-redis-3 /logs/api-gateway-2025-06-15.log");
+	await run(bash, "grep prod-redis-3 /openfs/logs/api-gateway-2025-06-15.log");
 	console.log("  Cross-reference: has this happened before?\n");
 	await run(bash, "cat /openfs/incidents/closed.csv | grep Redis");
 

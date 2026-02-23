@@ -45,7 +45,7 @@ const fs = new MountableFs({
 const bash = new Bash({
   fs,
   cwd: "/data",
-  customCommands: [createGrepCommand(vfs), createSearchCommand(vfs)],
+  customCommands: [createGrepCommand(vfs, "/data"), createSearchCommand(vfs)],
 });
 
 // Standard shell commands work across all backends
@@ -82,7 +82,7 @@ const fs = new MountableFs({
 const bash = new Bash({
   fs,
   cwd: "/",
-  customCommands: [createGrepCommand(vfs), createSearchCommand(vfs)],
+  customCommands: [createGrepCommand(vfs, "/data"), createSearchCommand(vfs)],
 });
 
 // Read local files and remote data in the same shell session
@@ -113,7 +113,7 @@ const bashTool = createBashTool({
     base: new InMemoryFs(),
     mounts: [{ mountPoint: "/data", filesystem: openFs }],
   }),
-  customCommands: [createGrepCommand(vfs), createSearchCommand(vfs)],
+  customCommands: [createGrepCommand(vfs, "/data"), createSearchCommand(vfs)],
 });
 
 const result = await generateText({
@@ -133,13 +133,15 @@ Directories are created automatically on write — `mkdir` is a no-op. Symlinks 
 
 ## Custom commands
 
-### `openfsgrep` — server-side regex search
+### `grep` — transparent server-side grep
 
 ```bash
-openfsgrep [-n] <pattern> [path]
+grep [OPTIONS] PATTERN [FILE...]
 ```
 
-Runs regex grep on the backend. Results come back as `path:line` pairs (or `path:line_number:line` with `-n`). Exit code 1 if no matches.
+The `grep` command works transparently across local and OpenFS paths. When all target paths are under the OpenFS mount and the flags are compatible, it automatically uses server-side grep for performance. Otherwise, it falls back to local matching (reading files through `ctx.fs`). Stdin piping works as expected.
+
+Supported flags: `-i`, `-n`, `-v`, `-c`, `-l`, `-L`, `-r`/`-R`, `-E`, `-F`, `-w`, `-o`, `-h`, `-q`, `-m N`, `-e PATTERN`.
 
 ### `search` — semantic search
 
@@ -178,8 +180,8 @@ const openFs = new OpenFs(options?: SubprocessVfsOptions);
 import { createGrepCommand, createSearchCommand } from "@open-fs/just-bash";
 
 // Pass a Vfs instance to create shell commands
-const grep = createGrepCommand(vfs);    // → openfsgrep
-const search = createSearchCommand(vfs); // → search
+const grep = createGrepCommand(vfs, "/data");  // → grep (transparent server-side + local)
+const search = createSearchCommand(vfs);        // → search
 ```
 
 ## Try the demos

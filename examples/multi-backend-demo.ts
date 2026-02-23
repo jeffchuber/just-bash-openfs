@@ -32,7 +32,7 @@ async function main() {
 		cwd: "/openfs",
 		customCommands: [
 			createSearchCommand(client),
-			createGrepCommand(client),
+			createGrepCommand(client, "/openfs"),
 		],
 	});
 
@@ -105,8 +105,8 @@ async function main() {
 	// ── 4. Grep across all backends ─────────────────────────────────
 
 	header("4. Grep across all backends");
-	console.log('  openfsgrep finds "fn" in code, and matches in other backends:\n');
-	await run(bash, "openfsgrep fn /");
+	console.log('  grep finds "fn" in code, and matches in other backends:\n');
+	await run(bash, "grep -r fn /openfs");
 
 	// ── 5. Semantic search ──────────────────────────────────────────
 

@@ -33,7 +33,7 @@ async function main() {
 		cwd: "/openfs",
 		customCommands: [
 			createSearchCommand(client),
-			createGrepCommand(client),
+			createGrepCommand(client, "/openfs"),
 		],
 	});
 
@@ -59,7 +59,7 @@ async function main() {
 	console.log("    /openfs/db/         Postgres      (CSV — stat size = rows)");
 	console.log("    /openfs/knowledge/  Chroma        (search only here)");
 	console.log("    /openfs/scratch/    Memory        (ephemeral)\n");
-	console.log("  Commands: search, openfsgrep, plus all standard shell builtins.\n");
+	console.log("  Commands: grep, search, plus all standard shell builtins.\n");
 
 	const rl = readline.createInterface({
 		input: process.stdin,
@@ -89,7 +89,7 @@ async function main() {
 			console.log("    ls /openfs                     — see all backends");
 			console.log("    cat /openfs/code/main.rs           — read from local fs");
 			console.log("    cat /openfs/db/users.csv | wc -l   — pipe Postgres through unix tools");
-			console.log('    openfsgrep fn /                    — grep across all backends');
+			console.log('    grep fn /openfs                    — grep across all backends');
 			console.log('    search "JWT tokens"            — semantic search (Chroma only)');
 			console.log('    echo "x" >> /openfs/docs/file.md   — S3 append error');
 			console.log("    stat /openfs/db/users.csv          — Postgres row-count size");
