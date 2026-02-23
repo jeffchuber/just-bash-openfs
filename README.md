@@ -10,30 +10,33 @@ Shell into any storage backend. `ls` your Postgres tables, `cat` files from S3, 
 /data/scratch/    → In-memory
 ```
 
-`@open-fs/just-bash` is an [IFileSystem](https://github.com/nicholasgasior/just-bash) adapter for [OpenFS](https://github.com/nicholasgasior/open-fs) virtual filesystems. It lets you mount any combination of storage backends into a unified directory tree and drive them all with standard shell commands.
+This package is a pluggable filesystem for [just-bash](https://github.com/vercel-labs/just-bash) — Vercel's sandboxed bash environment for AI agents. It implements the `IFileSystem` interface, letting you mount [OpenFS](https://github.com/nicholasgasior/open-fs) virtual filesystems alongside just-bash's built-in `InMemoryFs`, `OverlayFs`, and `ReadWriteFs`.
 
 ## Install
 
 ```bash
-npm install @open-fs/just-bash
+npm install @open-fs/just-bash just-bash
 ```
 
-Peer dependency: `just-bash >= 2.10.0`
+## Using with just-bash
 
-## Quick start
+[just-bash](https://github.com/vercel-labs/just-bash) provides a sandboxed bash environment with 60+ built-in commands, pipes, redirects, heredocs, and a pluggable filesystem architecture via `MountableFs`. This package adds OpenFS backends as a mount target.
+
+### Basic setup
 
 ```typescript
 import { Bash, MountableFs, InMemoryFs } from "just-bash";
 import { OpenFs, createVfs, createGrepCommand, createSearchCommand } from "@open-fs/just-bash";
 
-// Create the VFS client (connects to your OpenFS server)
+// Connect to your OpenFS server
 const vfs = await createVfs({ command: "openfs", args: ["serve"] });
 
-// Wrap it as an IFileSystem for just-bash
+// Wrap as an IFileSystem for just-bash
 const openFs = new OpenFs();
 openFs.setVfs(vfs);
 await openFs.init();
 
+// Mount OpenFS alongside other just-bash filesystems
 const fs = new MountableFs({
   base: new InMemoryFs(),
   mounts: [{ mountPoint: "/data", filesystem: openFs }],
@@ -45,17 +48,88 @@ const bash = new Bash({
   customCommands: [createGrepCommand(vfs), createSearchCommand(vfs)],
 });
 
+// Standard shell commands work across all backends
 await bash.exec("ls /data");
 await bash.exec("cat /data/docs/report.md");
 await bash.exec("cat /data/db/users.csv | grep admin | wc -l");
 await bash.exec('search "authentication best practices"');
 ```
 
+### Mixing with other just-bash filesystems
+
+`MountableFs` lets you combine OpenFS with any other `IFileSystem` — local project files via `OverlayFs`, a working directory via `ReadWriteFs`, and remote storage via `OpenFs`:
+
+```typescript
+import { Bash, MountableFs, InMemoryFs } from "just-bash";
+import { OverlayFs } from "just-bash/fs/overlay-fs";
+import { OpenFs, createVfs, createGrepCommand, createSearchCommand } from "@open-fs/just-bash";
+
+const vfs = await createVfs({ command: "openfs", args: ["serve"] });
+const openFs = new OpenFs();
+openFs.setVfs(vfs);
+await openFs.init();
+
+const fs = new MountableFs({
+  base: new InMemoryFs(),
+  mounts: [
+    // Read-only view of a local project
+    { mountPoint: "/project", filesystem: new OverlayFs({ root: "./my-app", readOnly: true }) },
+    // Remote storage backends via OpenFS
+    { mountPoint: "/data", filesystem: openFs },
+  ],
+});
+
+const bash = new Bash({
+  fs,
+  cwd: "/",
+  customCommands: [createGrepCommand(vfs), createSearchCommand(vfs)],
+});
+
+// Read local files and remote data in the same shell session
+await bash.exec("cat /project/package.json | head -5");
+await bash.exec("cat /data/db/users.csv | wc -l");
+
+// Copy between filesystems
+await bash.exec("cp /project/README.md /data/docs/readme-backup.md");
+```
+
+### Using with the AI SDK
+
+Combine with just-bash's [AI SDK tool](https://github.com/vercel-labs/just-bash) to give AI agents access to multi-backend storage:
+
+```typescript
+import { createBashTool } from "bash-tool";
+import { generateText } from "ai";
+import { OpenFs, createVfs, createGrepCommand, createSearchCommand } from "@open-fs/just-bash";
+import { MountableFs, InMemoryFs } from "just-bash";
+
+const vfs = await createVfs({ command: "openfs", args: ["serve"] });
+const openFs = new OpenFs();
+openFs.setVfs(vfs);
+await openFs.init();
+
+const bashTool = createBashTool({
+  fs: new MountableFs({
+    base: new InMemoryFs(),
+    mounts: [{ mountPoint: "/data", filesystem: openFs }],
+  }),
+  customCommands: [createGrepCommand(vfs), createSearchCommand(vfs)],
+});
+
+const result = await generateText({
+  model: "anthropic/claude-sonnet-4",
+  tools: { bash: bashTool },
+  prompt: "Search the knowledge base for authentication best practices and summarize them",
+});
+```
+
 ## How it works
 
-`OpenFs` wraps an OpenFS [Vfs](https://github.com/nicholasgasior/open-fs) — a virtual filesystem that routes paths to different storage backends. Each backend (S3, Postgres, Chroma, local disk, in-memory) handles reads, writes, listings, and deletions in its own way, but they all present the same interface. `OpenFs` translates that interface into the `IFileSystem` contract that just-bash expects, so every shell builtin (`cat`, `ls`, `cp`, `mv`, `rm`, `stat`, pipes, redirects, heredocs) works across all backends.
+`OpenFs` implements the `IFileSystem` interface that just-bash uses for all file operations. Under the hood, it delegates to an OpenFS [Vfs](https://github.com/nicholasgasior/open-fs) — a virtual filesystem that routes different paths to different storage backends. Each backend (S3, Postgres, Chroma, local disk, in-memory) handles reads, writes, and listings in its own way, but they all present the same interface to the shell.
 
-Directories are created automatically on write — `mkdir` is a no-op. Symlinks are not supported. Backend-specific behaviors (e.g., S3 rejecting `>>` append, Postgres reporting row count as file size) surface naturally through the shell.
+Every just-bash builtin (`cat`, `ls`, `cp`, `mv`, `rm`, `stat`, `wc`, `head`, `tail`, `sort`, pipes, redirects, heredocs) works across all backends. Backend-specific behaviors surface naturally — S3 rejects `>>` append, Postgres reports row count as file size, only Chroma supports semantic `search`.
+
+Directories are created automatically on write — `mkdir` is a no-op. Symlinks are not supported.
 
 ## Custom commands
 
@@ -65,7 +139,7 @@ Directories are created automatically on write — `mkdir` is a no-op. Symlinks 
 openfsgrep [-n] <pattern> [path]
 ```
 
-Runs regex grep on the backend. Results stream back as `path:line` pairs (or `path:line_number:line` with `-n`). Exit code 1 if no matches.
+Runs regex grep on the backend. Results come back as `path:line` pairs (or `path:line_number:line` with `-n`). Exit code 1 if no matches.
 
 ### `search` — semantic search
 
