@@ -1,0 +1,57 @@
+{
+	"name": "@open-fs/just-bash",
+	"version": "0.1.0",
+	"description": "OpenFS VFS filesystem backend for just-bash — full shell over any OpenFS-mounted storage",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "rm -rf dist && tsc",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check src",
+		"lint:fix": "biome check --write src",
+		"test": "vitest run",
+		"test:unit": "vitest run",
+		"check": "npm run typecheck && npm run lint && npm run test",
+		"prepack": "npm run check",
+		"prepublishOnly": "npm run check",
+		"demo": "tsx examples/multi-backend-demo.ts",
+		"demo:incident": "tsx examples/incident-response-demo.ts",
+		"repl": "tsx examples/repl.ts",
+		"repl:incident": "tsx examples/incident-repl.ts",
+		"web:incident": "tsx examples/incident-web.ts"
+	},
+	"dependencies": {
+		"@open-fs/core": "file:../openfs/ts"
+	},
+	"peerDependencies": {
+		"just-bash": ">=2.10.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.0",
+		"just-bash": "^2.10.0",
+		"just-bash-chroma": "file:../just-bash-chroma",
+		"typescript": "^5.5.0",
+		"tsx": "^4.0.0",
+		"vitest": "^2.0.0"
+	},
+	"license": "MIT",
+	"keywords": [
+		"bash",
+		"shell",
+		"filesystem",
+		"openfs",
+		"vfs",
+		"mcp",
+		"semantic-search"
+	]
+}
